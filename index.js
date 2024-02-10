@@ -11,7 +11,13 @@ function uProgress(progress) {
   process.stdout.cursorTo(0);
   process.stdout.write(`Progress: ${progress}%`);
 }
-
+function rgb2xyz(color){
+  const xyz = {}
+  xyz.x = color.r
+  xyz.y = color.g
+  xyz.z = color.b
+  return xyz
+}
 class Ray {
   constructor(origin, direction) {
     this.origin = origin;
@@ -59,7 +65,13 @@ class Sphere {
 
 class Render {
   constructor(options) {
+    buffer.defaultMaterial = options.defaultMaterial;
     buffer.vec3 = this.vec3
+    buffer.scale = this.scale
+    buffer.reflect = this.reflect
+    buffer.dot = this.dot
+    buffer.unitVector = this.unitVector
+    buffer.add = this.add
     this.materials = options.materials || {};
     buffer.materials = this.materials;
     this.defaultMaterial = options.defaultMaterial || {
@@ -103,9 +115,7 @@ class Render {
     if (hitObject) {
       const shader = this.shaders[hitObject.shader] || this.defaultShader;
       let shard = shader(hitObject, ray);
-      shard.x = shard.r
-      shard.y = shard.g
-      shard.z = shard.b
+      
       return shard
     }
     const unitDirection = this.unitVector(ray.direction);
@@ -115,7 +125,11 @@ class Render {
       this.scale(this.vec3(0.5, 0.7, 1.0), t),
     );
   }
-
+  reflect(incoming, normal) {
+    const factor = 2 * this.dot(incoming, normal);
+    const reflected = this.add(incoming, this.scale(normal, -factor));
+    return this.unitVector(reflected);
+  }
   render(objects, width, height, viewportWidth, viewportHeight, focalLength) {
     let data = "P3\n" + width + " " + height + "\n255\n";
     const lowerLeftCorner = this.vec3(
@@ -159,7 +173,7 @@ class Render {
           xo = x;
         }
       }
-      //console.log(j)
+      
     }
 
     return data;
@@ -173,15 +187,53 @@ const renderer = new Render({
   },
   defaultMaterial: { color: { r: 0.5, g: 0.5, b: 0.5 } },
   shaders: {
-    default: function (object, ray) {
-      let c = object.color;
+    default: function (o, ray) {
+      let object = o;
+      const ambientStrength = 0.1;
+      const diffuseStrength = 0.5;
+      const specularStrength = 0.5;
+      const shininess = 32;
+      if(buffer.materials[object.color]){
+        object.color = buffer.materials[object.color]
+        object.color = object.color.color
+      }
+      // Ambient component
+      const ambient = {
+        r: buffer.defaultMaterial.color.r * ambientStrength,
+        g: buffer.defaultMaterial.color.g * ambientStrength,
+        b: buffer.defaultMaterial.color.b * ambientStrength,
+      };
+      // Diffuse component
+      const lightDirection = { x: 0, y: 0, z: -1 }; // Example light direction
+      const normal = { x: 0, y: 0, z: -1 }; // Example surface normal (assuming facing the camera)
+      const dotProduct = Math.max(0, buffer.dot(normal, lightDirection));
+      const diffuse = {
+        r: object.color.r * dotProduct * diffuseStrength,
+        g: object.color.g * dotProduct * diffuseStrength,
+        b: object.color.b * dotProduct * diffuseStrength,
+      };
       
-      if(buffer.materials[c].color){
-        return buffer.materials[c].color;
-      }
-      else{
-        return c;
-      }
+      // Specular component
+      const viewDirection = buffer.unitVector(ray.direction);
+      const reflectionDirection = buffer.reflect(buffer.scale(lightDirection, -1), normal);
+      const specularDotProduct = Math.pow(Math.max(0, buffer.dot(viewDirection, reflectionDirection)), shininess);
+      const specular = {
+        r: specularStrength * specularDotProduct,
+        g: specularStrength * specularDotProduct,
+        b: specularStrength * specularDotProduct,
+      };
+
+      const finalColor = rgb2xyz( {
+        r: ambient.r + diffuse.r + specular.r,
+        g: ambient.g + diffuse.g + specular.g,
+        b: ambient.b + diffuse.b + specular.b,
+      });
+      
+      finalColor.x = Math.min(1, Math.max(0, finalColor.x));
+      finalColor.y = Math.min(1, Math.max(0, finalColor.y));
+      finalColor.z = Math.min(1, Math.max(0, finalColor.z));
+      
+      return finalColor;
     },
   },
 });
